@@ -134,3 +134,40 @@ td {
   font-size: 0.875rem;
   color: #475569;
 }
+
+.nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.navbtn {
+  background: #e2e8f0;
+  color: #334155;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.navbtn.active {
+  background: #0369a1;
+  color: #fff;
+}
+
+.switch-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+input.switch {
+  min-width: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.readonly-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}

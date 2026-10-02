@@ -23,6 +23,42 @@ CREATE TABLE IF NOT EXISTS probe_readings (
     processed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS idx_probe_readings_status ON probe_readings (status, id);
+
+-- 催领设置：单行表（id 恒为 1），记录员维护超时分钟阈值与开关
+CREATE TABLE IF NOT EXISTS reminder_settings (
+    id smallint PRIMARY KEY,
+    enabled boolean NOT NULL DEFAULT false,
+    timeout_minutes integer NOT NULL DEFAULT 5,
+    updated_by text,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT reminder_settings_singleton CHECK (id = 1)
+);
+
+-- 催领清单：一条超时候审读数只入清单一次
+CREATE TABLE IF NOT EXISTS claim_reminders (
+    id serial PRIMARY KEY,
+    reading_id integer NOT NULL UNIQUE REFERENCES probe_readings(id) ON DELETE CASCADE,
+    probe_id text NOT NULL,
+    waited_minutes integer NOT NULL,
+    reminded_by text NOT NULL,
+    reminded_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_claim_reminders_reading ON claim_reminders (reading_id);
+
+-- 催领流水：与清单逐笔对应，只在清单入账的同一事务内写入
+CREATE TABLE IF NOT EXISTS claim_reminder_logs (
+    id serial PRIMARY KEY,
+    action text NOT NULL,
+    reading_id integer REFERENCES probe_readings(id) ON DELETE CASCADE,
+    detail text NOT NULL,
+    operator text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_claim_reminder_logs_created ON claim_reminder_logs (created_at, id);
+
+INSERT INTO reminder_settings (id, enabled, timeout_minutes)
+VALUES (1, false, 5)
+ON CONFLICT (id) DO NOTHING;
 """
 
 

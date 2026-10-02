@@ -56,6 +56,174 @@ def require_writer(request: web.Request) -> dict:
     return user
 
 
+REMINDER_LOG_LIMIT = 200
+
+
+def _iso(value):
+    return value.isoformat() if value else None
+
+
+async def list_reminders(request: web.Request) -> web.Response:
+    """催领落地页数据：当前开关/阈值、催领清单、催领流水。登录即可只读。"""
+    require_user(request)
+    pool: asyncpg.Pool = request.app["pool"]
+    settings = await pool.fetchrow(
+        """
+        SELECT enabled, timeout_minutes, updated_by, updated_at
+        FROM reminder_settings WHERE id = 1
+        """
+    )
+    items = await pool.fetch(
+        """
+        SELECT cr.id, cr.reading_id, cr.probe_id,
+               cr.waited_minutes, cr.reminded_by, cr.reminded_at,
+               pr.status AS reading_status
+        FROM claim_reminders cr
+        JOIN probe_readings pr ON pr.id = cr.reading_id
+        ORDER BY cr.id DESC
+        """
+    )
+    logs = await pool.fetch(
+        """
+        SELECT id, action, reading_id, detail, operator, created_at
+        FROM claim_reminder_logs
+        ORDER BY id DESC
+        LIMIT $1
+        """,
+        REMINDER_LOG_LIMIT,
+    )
+    return web.json_response(
+        {
+            "settings": {
+                "enabled": settings["enabled"],
+                "timeout_minutes": settings["timeout_minutes"],
+                "updated_by": settings["updated_by"],
+                "updated_at": _iso(settings["updated_at"]),
+            },
+            "items": [
+                {
+                    "id": r["id"],
+                    "reading_id": r["reading_id"],
+                    "probe_id": r["probe_id"],
+                    "waited_minutes": r["waited_minutes"],
+                    "reminded_by": r["reminded_by"],
+                    "reminded_at": _iso(r["reminded_at"]),
+                    "reading_status": r["reading_status"],
+                }
+                for r in items
+            ],
+            "logs": [
+                {
+                    "id": r["id"],
+                    "action": r["action"],
+                    "reading_id": r["reading_id"],
+                    "detail": r["detail"],
+                    "operator": r["operator"],
+                    "created_at": _iso(r["created_at"]),
+                }
+                for r in logs
+            ],
+        }
+    )
+
+
+async def update_reminder_settings(request: web.Request) -> web.Response:
+    """记录员设置超时分钟阈值与开关。值班员只读，返回 403。
+
+    设置更新与开关流水在同一事务内提交。
+    """
+    user = require_user(request)
+    if user["role"] != "writer":
+        raise web.HTTPForbidden(
+            text=json.dumps({"detail": "仅记录员可修改催领阈值与开关"}, ensure_ascii=False),
+            content_type="application/json",
+        )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise web.HTTPBadRequest(text="invalid json") from exc
+
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"detail": "开关必须是布尔值"}, ensure_ascii=False),
+            content_type="application/json",
+        )
+    timeout_minutes = body.get("timeout_minutes")
+    if (
+        isinstance(timeout_minutes, bool)
+        or not isinstance(timeout_minutes, int)
+        or timeout_minutes < 1
+    ):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"detail": "超时分钟数必须是不小于 1 的整数"}, ensure_ascii=False),
+            content_type="application/json",
+        )
+
+    pool: asyncpg.Pool = request.app["pool"]
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            old = await conn.fetchrow(
+                "SELECT enabled, timeout_minutes FROM reminder_settings WHERE id = 1 FOR UPDATE"
+            )
+            await conn.execute(
+                """
+                INSERT INTO reminder_settings (id, enabled, timeout_minutes, updated_by, updated_at)
+                VALUES (1, $1, $2, $3, now())
+                ON CONFLICT (id) DO UPDATE
+                SET enabled = EXCLUDED.enabled,
+                    timeout_minutes = EXCLUDED.timeout_minutes,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = now()
+                """,
+                enabled,
+                timeout_minutes,
+                user["username"],
+            )
+            changes = []
+            if not old or bool(old["enabled"]) != enabled:
+                changes.append(
+                    (
+                        "switch_on" if enabled else "switch_off",
+                        None,
+                        f"催领开关已{'打开' if enabled else '关闭'}"
+                        + ("，关闭后停止新催领，已有催领行保留" if not enabled else ""),
+                    )
+                )
+            if not old or int(old["timeout_minutes"]) != timeout_minutes:
+                changes.append(
+                    (
+                        "threshold_changed",
+                        None,
+                        f"超时分钟阈值改为 {timeout_minutes} 分钟"
+                        + (f"（原 {int(old['timeout_minutes'])} 分钟）" if old else ""),
+                    )
+                )
+            for action, reading_id, detail in changes:
+                await conn.execute(
+                    """
+                    INSERT INTO claim_reminder_logs (action, reading_id, detail, operator, created_at)
+                    VALUES ($1, $2, $3, $4, now())
+                    """,
+                    action,
+                    reading_id,
+                    detail,
+                    user["username"],
+                )
+
+    row = await pool.fetchrow(
+        "SELECT enabled, timeout_minutes, updated_by, updated_at FROM reminder_settings WHERE id = 1"
+    )
+    return web.json_response(
+        {
+            "enabled": row["enabled"],
+            "timeout_minutes": row["timeout_minutes"],
+            "updated_by": row["updated_by"],
+            "updated_at": _iso(row["updated_at"]),
+        }
+    )
+
+
 async def health(_request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "service": "coldchain-probe-desk"})
 
@@ -179,6 +347,8 @@ def create_app() -> web.Application:
     app.router.add_post("/api/auth/login", login)
     app.router.add_get("/api/readings", list_readings)
     app.router.add_post("/api/readings", create_reading)
+    app.router.add_get("/api/reminders", list_reminders)
+    app.router.add_put("/api/reminders/settings", update_reminder_settings)
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
     return app
