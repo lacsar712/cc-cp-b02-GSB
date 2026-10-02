@@ -23,6 +23,37 @@ CREATE TABLE IF NOT EXISTS probe_readings (
     processed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS idx_probe_readings_status ON probe_readings (status, id);
+
+-- 催领设置：单行（id = 1）。enabled 为开关，timeout_minutes 为超时阈值（分钟）。
+CREATE TABLE IF NOT EXISTS reminder_settings (
+    id int PRIMARY KEY DEFAULT 1,
+    enabled boolean NOT NULL DEFAULT false,
+    timeout_minutes integer NOT NULL DEFAULT 30,
+    updated_by text,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT reminder_settings_singleton CHECK (id = 1)
+);
+INSERT INTO reminder_settings (id, enabled, timeout_minutes)
+VALUES (1, false, 30)
+ON CONFLICT (id) DO NOTHING;
+
+-- 催领清单：每个读数至多一行。是否超时一律由服务端按数据库时间判定。
+CREATE TABLE IF NOT EXISTS reminder_entries (
+    reading_id integer PRIMARY KEY REFERENCES probe_readings(id),
+    timed_out_at timestamptz NOT NULL,
+    added_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- 催领流水：每次把超时候审读数写入清单时追加一条；清单纯新增才追加。
+CREATE TABLE IF NOT EXISTS reminder_log (
+    id bigserial PRIMARY KEY,
+    reading_id integer NOT NULL REFERENCES probe_readings(id),
+    probe_id text NOT NULL,
+    timed_out_at timestamptz NOT NULL,
+    added_at timestamptz NOT NULL DEFAULT now(),
+    timeout_minutes integer NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reminder_log_added ON reminder_log (added_at DESC);
 """
 
 

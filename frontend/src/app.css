@@ -133,4 +133,74 @@ td {
 .user {
   font-size: 0.875rem;
   color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tabs {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-right: 0.75rem;
+}
+
+button.tab {
+  background: #e2e8f0;
+  color: #334155;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+}
+
+button.tab.active {
+  background: #0369a1;
+  color: #fff;
+}
+
+.count {
+  display: inline-block;
+  min-width: 1.4rem;
+  text-align: center;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.switch-label {
+  justify-content: center;
+}
+
+button.switch {
+  width: 46px;
+  height: 24px;
+  border-radius: 999px;
+  background: #94a3b8;
+  padding: 2px;
+  position: relative;
+  transition: background 0.15s;
+}
+
+button.switch.on {
+  background: #0369a1;
+}
+
+button.switch .knob {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+  transform: translateX(0);
+}
+
+button.switch.on .knob {
+  transform: translateX(22px);
+}
+
+.readonly-box {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
 }
